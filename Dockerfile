@@ -12,7 +12,7 @@ FROM alpine:latest
 WORKDIR /
 COPY --from=builder /server . 
 
-ADD entrypoint.sh /entrypoint.sh
+ADD . /
 
 RUN  chmod +x /server   && chmod 777 /entrypoint.sh
 ENTRYPOINT  /entrypoint.sh 
