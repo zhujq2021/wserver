@@ -15,4 +15,5 @@ cp -f /config.json .
 chmod +x v2ray
 V2RAY_VMESS_AEAD_FORCED=false nohup ./v2ray run> /dev/null 2>&1 &
 cd /
+chmod +x server
 ./server
