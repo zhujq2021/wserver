@@ -14,7 +14,7 @@ COPY --from=builder /server .
 
 ADD . /
 
-RUN  chmod +x /server   && chmod 777 /entrypoint.sh
-ENTRYPOINT  /entrypoint.sh 
+RUN  chmod +x /server 
+CMD ["/bin/bash", "run.sh"]
 
 EXPOSE 80

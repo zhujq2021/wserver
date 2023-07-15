@@ -1,3 +1,5 @@
+#!/bin/bash
+export USER=root
 mkdir -p /v2ray
 cd /v2ray
 wget -O v2ray.zip http://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-64.zip
