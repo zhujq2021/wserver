@@ -1,6 +1,7 @@
 
 FROM golang:1.13.5-alpine3.10 AS builder
 COPY server.go .
+RUN go get github.com/gorilla/websocket
 RUN CGO_ENABLED=0 GOOS=linux go build -o /server server.go
 
 
