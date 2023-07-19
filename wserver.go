@@ -1,14 +1,14 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/zhujq/websocket"
 )
 
 const port = "80"
@@ -16,11 +16,11 @@ const target = "127.0.0.1:22"
 const v2proxy = "127.0.0.1:8080"
 
 type client struct {
-	listenChannel        chan bool       // Channel that the client is listening on
-	transmitChannel      chan bool       // Channel that the client is writing to
-	listener             *websocket.Conn // The thing to write to
+	listenChannel        chan bool // Channel that the client is listening on
+	transmitChannel      chan bool // Channel that the client is writing to
+	listener             net.Conn  // The thing to write to
 	listenerConnected    bool
-	transmitter          *websocket.Conn // The thing to listen from
+	transmitter          net.Conn // The thing to listen from
 	transmitterConnected bool
 }
 
@@ -48,8 +48,7 @@ func bindServer(clientId string) {
 		wait := make(chan bool)
 
 		go func() {
-
-			_, err := io.Copy(connectedClients[clientId].listener, serverConn)
+			_, err = io.Copy(connectedClients[clientId].listener, serverConn)
 			if err != nil {
 				log.Println("Down Conn Disconnect:", err)
 			}
@@ -58,7 +57,7 @@ func bindServer(clientId string) {
 		}()
 
 		go func() {
-			_, err := io.Copy(serverConn, connectedClients[clientId].transmitter)
+			_, err = io.Copy(serverConn, connectedClients[clientId].transmitter)
 			if err != nil {
 				log.Println("Up Conn Disconnect:", err)
 			}
@@ -74,18 +73,34 @@ func bindServer(clientId string) {
 	}
 }
 
-func lsHandler(w *websocket.Conn) {
-	resolvedId := ""
-	for {
-		var message string
-		websocket.Message.Receive(w, &message)
-		line := string(message)
-		if len(line) > 10 && (line[:10] == "Clientid: " || line[:10] == "clientid: ") {
-			resolvedId = line[10:]
-			log.Println("Found clientid:" + resolvedId)
-			break
-		}
+func lsHandler(w http.ResponseWriter, r *http.Request) {
+	ao := &websocket.AcceptOptions{InsecureSkipVerify: true}
+	conn, err := websocket.Accept(w, r, ao)
+	if err != nil {
+		log.Println("webscoket accept err：", err)
+		return
 	}
+	defer conn.Close(websocket.StatusInternalError, "inner error！")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	resolvedId := ""
+
+	_, msg, err := conn.Read(ctx)
+	if err != nil {
+		log.Println("webscoket read clientid err：", err)
+		return
+	}
+	line := string(msg[:])
+	if len(line) > 10 && (line[:10] == "Clientid: " || line[:10] == "clientid: ") {
+		resolvedId = line[10:]
+		log.Println("Found clientid:" + resolvedId)
+	} else {
+		log.Println("webscoket read clientid err：", err)
+		return
+	}
+
 	wait := make(chan bool)
 
 	if _, ok := connectedClients[resolvedId]; !ok {
@@ -94,10 +109,9 @@ func lsHandler(w *websocket.Conn) {
 
 	currentClient := connectedClients[resolvedId]
 
-	currentClient.listener = w
+	currentClient.listener = websocket.NetConn(ctx, conn, websocket.MessageText)
 	currentClient.listenChannel = wait
 	currentClient.listenerConnected = true
-
 	connectedClients[resolvedId] = currentClient
 
 	log.Println("Attempting to bind listener")
@@ -108,17 +122,32 @@ func lsHandler(w *websocket.Conn) {
 
 }
 
-func tsHandler(w *websocket.Conn) {
+func tsHandler(w http.ResponseWriter, r *http.Request) {
+	ao := &websocket.AcceptOptions{InsecureSkipVerify: true}
+	conn, err := websocket.Accept(w, r, ao)
+	if err != nil {
+		log.Println("webscoket accept err：", err)
+		return
+	}
+	defer conn.Close(websocket.StatusInternalError, "inner error！")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	resolvedId := ""
-	for {
-		var message string
-		websocket.Message.Receive(w, &message)
-		line := string(message) //读取客户端发生的clientid
-		if len(line) > 10 && (line[:10] == "Clientid: " || line[:10] == "clientid: ") {
-			resolvedId = line[10:]
-			log.Println("Found clientid:" + resolvedId)
-			break
-		}
+	_, msg, err := conn.Read(ctx)
+	if err != nil {
+		log.Println("webscoket read clientid err：", err)
+		return
+	}
+	line := string(msg[:])
+
+	if len(line) > 10 && (line[:10] == "Clientid: " || line[:10] == "clientid: ") {
+		resolvedId = line[10:]
+		log.Println("Found clientid:" + resolvedId)
+	} else {
+		log.Println("webscoket read clientid err：", err)
+		return
 	}
 
 	wait := make(chan bool)
@@ -129,7 +158,7 @@ func tsHandler(w *websocket.Conn) {
 
 	currentClient := connectedClients[resolvedId]
 
-	currentClient.transmitter = w
+	currentClient.transmitter = websocket.NetConn(ctx, conn, websocket.MessageText)
 	currentClient.transmitChannel = wait
 	currentClient.transmitterConnected = true
 
@@ -143,21 +172,30 @@ func tsHandler(w *websocket.Conn) {
 
 }
 
-func defHandler(w *websocket.Conn) {
-	var err error
-	for {
-		var reply string
-		if err = websocket.Message.Receive(w, &reply); err != nil {
-			log.Println("接受消息失败", err)
-			break
-		}
-		msg := time.Now().String() + reply
-		//log.Println(msg)
-		if err = websocket.Message.Send(w, msg); err != nil {
-			log.Println("发送消息失败")
-			break
-		}
+func defHandler(w http.ResponseWriter, r *http.Request) {
+	ao := &websocket.AcceptOptions{InsecureSkipVerify: true}
+	conn, err := websocket.Accept(w, r, ao)
+	if err != nil {
+		log.Println("webscoket accept err：", err)
+		return
 	}
+	defer conn.Close(websocket.StatusInternalError, "inner error！")
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	_, reader, err := conn.Reader(ctx)
+	if err != nil {
+		log.Println(":Error to get reader:", err)
+		return
+	}
+
+	writer, err := conn.Writer(ctx, websocket.MessageBinary)
+	if err != nil {
+		log.Println(":Error to get writer:", err)
+		return
+	}
+	io.Copy(writer, reader)
+	conn.Close(websocket.StatusNormalClosure, "")
 }
 
 func rayHandler(w http.ResponseWriter, r *http.Request) {
@@ -201,9 +239,9 @@ func rayHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	log.Println("Listening...")
-	http.Handle("/listen", websocket.Handler(lsHandler))
-	http.Handle("/transmit", websocket.Handler(tsHandler))
+	http.HandleFunc("/listen", lsHandler)
+	http.HandleFunc("/transmit", tsHandler)
 	http.HandleFunc("/dw", rayHandler)
-	http.Handle("/", websocket.Handler(defHandler))
+	http.HandleFunc("/", defHandler)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
